@@ -1,0 +1,17 @@
+name: bioml
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.11
+  - pytorch
+  - rdkit
+  - scikit-learn
+  - pandas
+  - numpy
+  - matplotlib
+  - seaborn
+  - xgboost
+  - pyyaml
+  - tqdm
+  - pytest
