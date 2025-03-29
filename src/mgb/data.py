@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+from rdkit import Chem, RDLogger
+
+RDLogger.DisableLog("rdApp.*")
 
 BASE_URL = "https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/"
 RAW_DIR = Path(__file__).resolve().parents[2] / "data" / "raw"
@@ -46,9 +49,13 @@ def download(name: str) -> Path:
 
 
 def load(name: str) -> tuple[pd.DataFrame, DatasetSpec]:
-    """Return a frame with a ``smiles`` column and one column per task."""
+    """Return a frame with a ``smiles`` column and one column per task.
+
+    Molecules RDKit cannot parse are dropped so every model sees the same rows.
+    """
     spec = SPECS[name]
     df = pd.read_csv(download(name))
     df = df.rename(columns={spec.smiles_col: "smiles"})
     df = df[["smiles", *spec.task_cols]].dropna(subset=["smiles"])
-    return df.reset_index(drop=True), spec
+    valid = [Chem.MolFromSmiles(s) is not None for s in df["smiles"]]
+    return df[valid].reset_index(drop=True), spec
