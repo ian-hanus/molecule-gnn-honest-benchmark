@@ -9,8 +9,9 @@ import numpy as np
 
 from . import baselines, metrics
 from .data import load
-from .featurize import ecfp_matrix
+from .featurize import ecfp_matrix, mol_to_graph
 from .splits import random_split, scaffold_overlap, scaffold_split
+from .train import TrainConfig, ensemble, train_one
 
 
 @lru_cache(maxsize=None)
@@ -25,6 +26,12 @@ def _dataset(name: str):
 def _fingerprints(name: str) -> np.ndarray:
     smiles, _, _ = _dataset(name)
     return ecfp_matrix(smiles)
+
+
+@lru_cache(maxsize=None)
+def _graphs(name: str):
+    smiles, _, _ = _dataset(name)
+    return [mol_to_graph(s) for s in smiles]
 
 
 def make_split(name: str, split: str, seed: int):
@@ -64,3 +71,33 @@ def run_baseline(model: str, dataset: str, split: str, seed: int) -> dict:
     }
     row.update(score(spec, Y[te], pred))
     return row
+
+
+def run_gnn(
+    arch: str, dataset: str, split: str, seed: int,
+    n_members: int = 5, cfg: TrainConfig | None = None, device: str = "cpu",
+) -> list[dict]:
+    """Train ``n_members`` seeds of ``arch``; return a single-model row and an ensemble row."""
+    cfg = cfg or TrainConfig()
+    smiles, Y, spec = _dataset(dataset)
+    graphs = _graphs(dataset)
+    tr, va, te = make_split(dataset, split, seed)
+
+    t0 = time.time()
+    members = [
+        train_one(arch, spec.task_type, graphs, Y, tr, va, te, seed * 1000 + m, cfg, device)
+        for m in range(n_members)
+    ]
+    seconds = round(time.time() - t0, 1)
+
+    base = {
+        "dataset": dataset, "split": split, "seed": seed,
+        "n_train": len(tr), "n_test": len(te),
+        "scaffold_overlap": scaffold_overlap(smiles, tr, te),
+    }
+    rows = []
+    for name, pred in [(arch, members[0]), (f"{arch}-ens{n_members}", ensemble(members))]:
+        row = {**base, "model": name, "seconds": seconds}
+        row.update(score(spec, Y[te], pred))
+        rows.append(row)
+    return rows
