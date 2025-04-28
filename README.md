@@ -1,36 +1,31 @@
-# molecule-gnn-honest-benchmark
+# Do graph neural networks beat fingerprint baselines on small molecular datasets? A scaffold-split benchmark with calibration checks
 
-Do graph neural networks beat fingerprint baselines on small molecular property
-datasets, once the split and the uncertainty are handled honestly?
+## Abstract
 
-**Short answer:** not reliably. On three MoleculeNet datasets the differences between
-GNNs and random forest / XGBoost on ECFP counts are mostly smaller than the
-split-to-split noise. What does change the picture is the split: scaffold splitting
-costs every model about the same amount. Ensemble spread is a poor uncertainty
-estimate on out-of-scaffold molecules.
+We compare three plain-PyTorch graph neural networks (GCN, GINE, D-MPNN), each as a single model and as a 3-member ensemble, against random forest and XGBoost on ECFP counts. The datasets are MoleculeNet ESOL, BBBP and Tox21, evaluated under random and Bemis-Murcko scaffold splits over 3 to 5 split seeds, without hyperparameter tuning. Differences between GNNs and fingerprint baselines are mostly smaller than split-to-split variation. On the scaffold split the best ESOL model (gin-ens3, RMSE 0.973 ± 0.087) is within one standard deviation of XGBoost (1.029 ± 0.053), random forest is best on BBBP (AUC 0.901 ± 0.026), and GNN ensembles are slightly ahead on Tox21 (0.821 ± 0.006 vs 0.802 ± 0.025). Scaffold splitting costs all model families a similar amount. GNN ensemble spread gives poor uncertainty on out-of-scaffold molecules: nominal 90% intervals on ESOL cover the truth 25% to 38% of the time.
 
 ![scaffold gap](results/fig_scaffold_gap.png)
 
-## Setup
+## 1. Question
 
-- **Data:** MoleculeNet ESOL (regression, RMSE), BBBP (binary, ROC-AUC) and Tox21
-  (12 tasks with missing labels, mean masked ROC-AUC). Molecules RDKit cannot parse are
-  dropped so every model sees the same rows.
-- **Splits:** a random 80/10/10 split and a balanced Bemis-Murcko **scaffold split**
-  (whole scaffolds go to one side). 5 split seeds for ESOL and BBBP, 3 for Tox21.
-  A test checks that no scaffold crosses the scaffold split.
-- **Baselines:** random forest and XGBoost on ECFP counts.
-- **GNNs:** plain-PyTorch GCN, GINE and D-MPNN, written without PyG. Each is trained with
-  early stopping on a validation set (60 epochs, patience 12) and with masked multi-task
-  losses for Tox21. Each GNN is also run as a 3-member seed ensemble (`-ens3`).
-- **No hyperparameter tuning** for any model. Settings were fixed in advance, so a tuned
-  baseline or a tuned GNN could move the numbers.
+Do GNNs outperform fingerprint baselines on small molecular property datasets when the split and the uncertainty estimate are handled carefully? Two sub-questions: how much of reported performance depends on the split type, and are ensemble-based uncertainty estimates trustworthy on molecules from unseen scaffolds?
 
-## Results
+## 2. Methods
 
-Mean ± std over split seeds. Full tables are in [`results/summary.md`](results/summary.md).
+**Data.** ESOL (regression, RMSE), BBBP (binary, ROC-AUC) and Tox21 (12 tasks with missing labels, mean masked ROC-AUC). Molecules RDKit cannot parse are dropped so every model sees the same rows.
 
-### Scaffold split (the harder, more realistic test)
+**Splits.** A random 80/10/10 split and a balanced Bemis-Murcko scaffold split in which whole scaffolds go to one side. 5 split seeds for ESOL and BBBP, 3 for Tox21. A unit test checks that no scaffold crosses the scaffold split.
+
+**Models.**
+- Baselines: random forest and XGBoost on ECFP counts.
+- GNNs: GCN, GINE and D-MPNN written in plain PyTorch (no PyG), trained with early stopping on a validation set (60 epochs, patience 12) and masked multi-task losses for Tox21. Each GNN is also run as a 3-member seed ensemble (`-ens3`).
+- No hyperparameter tuning for any model. Settings were fixed in advance.
+
+**Uncertainty.** For ESOL, the interval is mean ± 1.645 sigma, with sigma the spread across ensemble members (GNNs) or across trees (random forest); nominal coverage is 90%. For classification, expected calibration error (ECE) is reported.
+
+## 3. Results
+
+Mean ± std over split seeds, scaffold split. Full tables, including random-split numbers, are in [`results/summary.md`](results/summary.md).
 
 | model | ESOL RMSE ↓ | BBBP AUC ↑ | Tox21 AUC ↑ |
 |---|---|---|---|
@@ -43,46 +38,29 @@ Mean ± std over split seeds. Full tables are in [`results/summary.md`](results/
 | gin-ens3 | **0.973 ± 0.087** | 0.869 ± 0.024 | **0.821 ± 0.006** |
 | dmpnn-ens3 | 0.998 ± 0.121 | 0.875 ± 0.041 | 0.803 ± 0.014 |
 
-### What I take from this
+**Split leakage.** Under a random split, the share of test molecules whose scaffold also appears in training is 58% (BBBP), 77% (Tox21) and 81% (ESOL), versus 0% under the scaffold split by construction. Moving to the scaffold split raises ESOL RMSE by about 0.28 to 0.36 for every model and lowers classification AUC by about 0.02 to 0.05.
 
-1. **No clear GNN win.** On ESOL the best model (gin-ens3, 0.973) is within one standard
-   deviation of XGBoost (1.029). On BBBP the random forest is the best model and every GNN is
-   about 0.02 to 0.03 AUC behind it. Only on Tox21 do GNNs sit slightly above the baselines
-   (best 0.821 vs 0.802 for RF), and that is 3 seeds with std up to 0.025.
-2. **Ensembling helps a little, usually.** An `-ens3` model beats its single-model version in
-   most cells (ESOL scaffold RMSE improves by 0.04 to 0.055), but not all: on BBBP scaffold
-   gin-ens3 is slightly worse than gin (0.869 vs 0.873). The gains are comparable to the noise.
-3. **Random splits flatter every model.** Test molecules share a scaffold with the training
-   set 58% (BBBP), 77% (Tox21) and 81% (ESOL) of the time under a random split, versus 0% by
-   construction under a scaffold split. Moving to the scaffold split raises ESOL RMSE by about
-   0.28 to 0.36 for every model and lowers classification AUC by about 0.02 to 0.05.
-   The size of that penalty is similar across model families, so in this data I could not
-   show that GNNs are more or less hurt by scaffold shift than fingerprints.
-4. **Ensemble spread is not an honest uncertainty estimate here.** On the ESOL scaffold
-   split, a nominal 90% interval (mean ± 1.645 sigma of the ensemble) covers the truth only
-   25% to 38% of the time for the GNN ensembles. The random forest's per-tree spread covers
-   91%, although its RMSE is the worst of the group. With only 3 members the ensembles are
-   overconfident; I did not try recalibration.
-5. **Classification calibration is mostly fine**, with ECE around 0.01 to 0.02 on Tox21 for
-   everything except XGBoost (0.115), and about 0.07 to 0.10 on BBBP, where the random forest
-   and XGBoost are slightly better calibrated than the GNNs.
+**Interval coverage (ESOL, scaffold split, nominal 90%).** Random forest 0.91 ± 0.03; gcn-ens3 0.32 ± 0.07; gin-ens3 0.38 ± 0.07; dmpnn-ens3 0.25 ± 0.09.
 
-## Limitations
+**Classification calibration (ECE, scaffold split).** On Tox21, ECE is about 0.01 to 0.02 for every model except XGBoost (0.115). On BBBP it is about 0.07 to 0.10; random forest (0.071) and XGBoost (0.073) are slightly better calibrated than the GNNs (0.080 to 0.102).
 
-- **Few seeds** (5 for ESOL and BBBP, 3 for Tox21). Most gaps between models are inside
-  one standard deviation and should be read as "no detectable difference".
-- **No tuning** for any model, and a short training schedule (60 epochs, patience 12).
-  Tuned GNNs, pretrained GNNs or larger ensembles could change the ranking.
-- **Small ensembles** (3 members), which is probably why the interval coverage is so low.
-- **The interval check is ESOL only.** I did not evaluate uncertainty on the classification
-  datasets beyond ECE.
-- **Scaffold splits are one kind of shift.** I did not do the error-versus-similarity analysis
-  (accuracy as a function of distance to the nearest training molecule) that would show where
-  the models actually fail.
-- Three datasets of modest size, so nothing here says how the methods compare on large or
-  3D-dependent benchmarks.
+## 4. Discussion
 
-## Reproduce
+1. **No clear GNN advantage.** On ESOL, gin-ens3 (0.973) is within one standard deviation of XGBoost (1.029). On BBBP the random forest is best and every GNN is about 0.02 to 0.03 AUC behind it. Only on Tox21 do GNNs sit slightly above the baselines, with 3 seeds and std up to 0.025.
+2. **Ensembling usually helps a little.** An `-ens3` model beats its single-model version in most cells (ESOL scaffold RMSE improves by 0.04 to 0.055) but not all: on BBBP scaffold, gin-ens3 is slightly worse than gin (0.869 vs 0.873). The gains are comparable to the noise.
+3. **Random splits flatter every model.** The scaffold penalty is similar across model families, so these data do not show that GNNs are more or less hurt by scaffold shift than fingerprints.
+4. **Ensemble spread is overconfident here.** The GNN ensembles cover 25% to 38% against a nominal 90%, while the random forest, which has the worst RMSE of the group, covers 91%. With only 3 members the ensembles are overconfident; recalibration was not tried.
+
+## 5. Limitations
+
+- Few seeds (5 for ESOL and BBBP, 3 for Tox21). Most gaps between models lie inside one standard deviation and should be read as no detectable difference.
+- No tuning for any model and a short training schedule (60 epochs, patience 12). Tuned or pretrained GNNs, or larger ensembles, could change the ranking.
+- Ensembles have 3 members, which probably contributes to the low interval coverage.
+- The interval check is ESOL only; classification uncertainty is assessed through ECE alone.
+- Scaffold splits are one kind of distribution shift. An error-versus-similarity analysis (error as a function of distance to the nearest training molecule) was not done.
+- Three datasets of modest size say nothing about large or 3D-dependent benchmarks.
+
+## 6. Reproduce
 
 ```bash
 conda env create -f environment.yml && conda activate bioml
